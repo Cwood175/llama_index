@@ -49,6 +49,7 @@ def _get_sample_vector(num: float) -> List[float]:
 @pytest.fixture(scope="session")
 def conn() -> Any:
     import psycopg2
+
     return psycopg2.connect(**PARAMS)  # type: ignore
 
 
@@ -170,7 +171,6 @@ def hybrid_node_embeddings() -> List[TextNode]:
     ]
 
 
-@pytest.mark.skipif(postgres_not_available, reason="postgres db is not available")
 @pytest.mark.asyncio
 async def test_paradedb_instance_creation(db: None) -> None:
     """Test that ParadeDBVectorStore can be instantiated."""
@@ -188,7 +188,6 @@ async def test_paradedb_instance_creation(db: None) -> None:
     await pg.close()
 
 
-@pytest.mark.skipif(postgres_not_available, reason="postgres db is not available")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [True, False])
 async def test_bm25_sparse_query(
@@ -226,7 +225,6 @@ async def test_bm25_sparse_query(
     assert "ccc" in node_ids or "ddd" in node_ids
 
 
-@pytest.mark.skipif(postgres_not_available, reason="postgres db is not available")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [True, False])
 async def test_bm25_hybrid_query(
@@ -264,7 +262,6 @@ async def test_bm25_hybrid_query(
     assert "ccc" in node_ids or "ddd" in node_ids
 
 
-@pytest.mark.skipif(postgres_not_available, reason="postgres db is not available")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [True, False])
 async def test_bm25_with_special_characters(
@@ -300,7 +297,6 @@ async def test_bm25_with_special_characters(
     assert set(node_ids) == {"ccc", "ddd"}
 
 
-@pytest.mark.skipif(postgres_not_available, reason="postgres db is not available")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [True, False])
 async def test_bm25_halfvec(
@@ -334,7 +330,6 @@ async def test_bm25_halfvec(
     assert len(res.nodes) >= 2
 
 
-@pytest.mark.skipif(postgres_not_available, reason="postgres db is not available")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [True, False])
 async def test_bm25_hnsw_hybrid(
@@ -370,7 +365,6 @@ async def test_bm25_hnsw_hybrid(
     assert "ccc" in node_ids or "ddd" in node_ids
 
 
-@pytest.mark.skipif(postgres_not_available, reason="postgres db is not available")
 @pytest.mark.asyncio
 async def test_bm25_index_creation(
     pg_bm25: ParadeDBVectorStore,
@@ -392,7 +386,6 @@ async def test_bm25_index_creation(
     assert index_count == 1, f"Expected BM25 index '{data_test_index_name}' to exist"
 
 
-@pytest.mark.skipif(postgres_not_available, reason="postgres db is not available")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [True, False])
 async def test_bm25_empty_query(
@@ -434,24 +427,28 @@ async def test_bm25_extensions_created(db: None) -> None:
         hybrid_search=True,
         embed_dim=TEST_EMBED_DIM,
     )
-    
+
     # Force initialization
-    pg.add([
-        TextNode(
-            text="test",
-            id_="test",
-            embedding=_get_sample_vector(1.0),
-        )
-    ])
-    
+    pg.add(
+        [
+            TextNode(
+                text="test",
+                id_="test",
+                embedding=_get_sample_vector(1.0),
+            )
+        ]
+    )
+
     # Check that both extensions exist
     with psycopg2.connect(**PARAMS, database=TEST_DB) as conn:
         with conn.cursor() as c:
-            c.execute("SELECT COUNT(*) FROM pg_extension WHERE extname IN ('vector', 'pg_search');")
+            c.execute(
+                "SELECT COUNT(*) FROM pg_extension WHERE extname IN ('vector', 'pg_search');"
+            )
             ext_count = c.fetchone()[0]
-    
+
     assert ext_count == 2, "Both 'vector' and 'pg_search' extensions should exist"
-    
+
     await pg.close()
 
 
@@ -464,27 +461,27 @@ async def test_paradedb_inherits_pgvector_functionality(
     """Test that ParadeDBVectorStore inherits all PGVectorStore functionality."""
     # Add nodes
     pg_bm25.add(hybrid_node_embeddings)
-    
+
     # Test vector-only query (inherited from PGVectorStore)
     q = VectorStoreQuery(
         query_embedding=_get_sample_vector(0.1),
         similarity_top_k=2,
         mode=VectorStoreQueryMode.DEFAULT,
     )
-    
+
     res = pg_bm25.query(q)
     assert res.nodes
     assert len(res.nodes) == 2
-    
+
     # Test delete (inherited)
     pg_bm25.delete_nodes(["aaa"])
-    
+
     res = pg_bm25.query(q)
     assert "aaa" not in res.ids
-    
+
     # Test clear (inherited)
     await pg_bm25.aclear()
-    
+
     res = pg_bm25.query(q)
     assert len(res.nodes) == 0
 
@@ -492,11 +489,9 @@ async def test_paradedb_inherits_pgvector_functionality(
 @pytest.mark.skipif(postgres_not_available, reason="postgres db is not available")
 @pytest.mark.asyncio
 async def test_bm25_vs_tsvector_different_results(
-    db: None,
-    hybrid_node_embeddings: List[TextNode]
-    ) -> None:
+    db: None, hybrid_node_embeddings: List[TextNode]
+) -> None:
     """Test that BM25 and ts_vector can produce different ranking results."""
-    
     # Create both stores
     pg_tsvector = PGVectorStore.from_params(
         **PARAMS,  # type: ignore
@@ -506,7 +501,7 @@ async def test_bm25_vs_tsvector_different_results(
         hybrid_search=True,
         embed_dim=TEST_EMBED_DIM,
     )
-    
+
     pg_bm25 = ParadeDBVectorStore.from_params(
         **PARAMS,  # type: ignore
         database=TEST_DB,
@@ -518,14 +513,14 @@ async def test_bm25_vs_tsvector_different_results(
     )
     pg_tsvector.add(hybrid_node_embeddings)
     pg_bm25.add(hybrid_node_embeddings)
-    
+
     q = VectorStoreQuery(
         query_str="fox",
         sparse_top_k=2,
         mode=VectorStoreQueryMode.SPARSE,
         query_embedding=_get_sample_vector(5.0),
     )
-    
+
     res_tsvector = pg_tsvector.query(q)
     res_bm25 = pg_bm25.query(q)
 
@@ -538,11 +533,11 @@ async def test_bm25_vs_tsvector_different_results(
     # Both should return results
     assert len(res_tsvector.nodes) == 2
     assert len(res_bm25.nodes) == 2
-    
+
     # BM25 uses BM25 ranking, ts_vector uses ts_rank
     # The implementation difference is verified
     assert pg_bm25.use_bm25 is True
     assert not hasattr(pg_tsvector, "use_bm25") or pg_tsvector.use_bm25 is False
-    
+
     await pg_tsvector.close()
     await pg_bm25.close()
