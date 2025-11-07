@@ -25,6 +25,9 @@ from PIL import Image
 import io
 import numpy as np
 
+# Ensure module import path is exercised by tests
+assert BedrockConverse is not None
+
 # Expected values
 EXP_RESPONSE = "Test"
 EXP_STREAM_RESPONSE = ["Test ", "value"]
@@ -49,6 +52,734 @@ needs_aws_creds = pytest.mark.skipif(
     or os.getenv("AWS_REGION") is None,
     reason="AWS credentials not found in environment, skipping integration test",
 )
+
+
+@pytest.fixture(scope="module")
+def temp_image_bytes():
+    """Generate a 100x100 red image directly in memory and return its bytes."""
+    width, height = 100, 100
+    red_array = np.zeros((height, width, 3), dtype=np.uint8)
+    red_array[:, :, 0] = 255
+
+    img = Image.fromarray(red_array)
+
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    buffer.seek(0)
+
+    return buffer.read()
+
+
+@pytest.fixture(scope="module")
+def bedrock_converse_integration():
+    """Create a BedrockConverse instance for integration tests with proper credentials."""
+    return BedrockConverse(
+        model=EXP_MODEL,
+        region_name=os.getenv("AWS_REGION", "us-east-1"),
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+        max_tokens=EXP_MAX_TOKENS,
+        system_prompt_caching=True,
+    )
+
+
+@pytest.fixture(scope="module")
+def bedrock_converse_integration_thinking():
+    """Create a BedrockConverse instance for integration tests with proper credentials."""
+    return BedrockConverse(
+        model=os.getenv("BEDROCK_THINKING_MODEL")
+        or "anthropic.claude-3-7-sonnet-20250219-v1:0",
+        region_name=os.getenv("AWS_REGION", "us-east-1"),
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+        max_tokens=12000,
+        temperature=1,
+        thinking={"budget_tokens": 10000, "type": "enabled"},
+    )
+
+
+@pytest.fixture(scope="module")
+def bedrock_converse_integration_no_system_prompt_caching_param():
+    """Create a BedrockConverse instance for integration tests with proper credentials."""
+    return BedrockConverse(
+        model=EXP_MODEL,
+        region_name=os.getenv("AWS_REGION", "us-east-1"),
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+        max_tokens=EXP_MAX_TOKENS,
+    )
+
+
+class MockExceptions:
+    class ThrottlingException(Exception):
+        pass
+
+
+class AsyncMockClient:
+    def __init__(self) -> "AsyncMockClient":
+        self.exceptions = MockExceptions()
+
+    async def __aenter__(self) -> "AsyncMockClient":
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        pass
+
+    async def converse(self, *args, **kwargs):
+        return {"output": {"message": {"content": [{"text": EXP_RESPONSE}]}}}
+
+    async def converse_stream(self, *args, **kwargs):
+        async def stream_generator():
+            for element in EXP_STREAM_RESPONSE:
+                yield {
+                    "contentBlockDelta": {
+                        "delta": {"text": element},
+                        "contentBlockIndex": 0,
+                    }
+                }
+            # Add messageStop and metadata events for token usage testing
+            yield {"messageStop": {"stopReason": "end_turn"}}
+            yield {
+                "metadata": {
+                    "usage": {"inputTokens": 15, "outputTokens": 26, "totalTokens": 41},
+                    "metrics": {"latencyMs": 886},
+                }
+            }
+
+        return {"stream": stream_generator()}
+
+
+class MockClient:
+    def __init__(self) -> "MockClient":
+        self.exceptions = MockExceptions()
+
+    def converse(self, *args, **kwargs):
+        return {"output": {"message": {"content": [{"text": EXP_RESPONSE}]}}}
+
+    def converse_stream(self, *args, **kwargs):
+        def stream_generator():
+            for i, element in enumerate(EXP_STREAM_RESPONSE):
+                yield {
+                    "contentBlockDelta": {
+                        "delta": {"text": element},
+                        "contentBlockIndex": 0,
+                    }
+                }
+            # Add messageStop and metadata events for token usage testing
+            yield {"messageStop": {"stopReason": "end_turn"}}
+            yield {
+                "metadata": {
+                    "usage": {"inputTokens": 15, "outputTokens": 26, "totalTokens": 41},
+                    "metrics": {"latencyMs": 886},
+                }
+            }
+
+        return {"stream": stream_generator()}
+
+
+class MockAsyncSession:
+    def __init__(self, *args, **kwargs) -> "MockAsyncSession":
+        pass
+
+    def client(self, *args, **kwargs):
+        return AsyncMockClient()
+
+
+def mock_boto3_session(monkeypatch):
+    def mock_client(*args, **kwargs):
+        return MockClient()
+
+    monkeypatch.setattr("boto3.Session.client", mock_client)
+
+
+def mock_aioboto3_session(monkeypatch):
+    monkeypatch.setattr("aioboto3.Session", MockAsyncSession)
+
+
+def bedrock_converse(mock_boto3_session, mock_aioboto3_session):
+    return BedrockConverse(
+        model=EXP_MODEL,
+        max_tokens=EXP_MAX_TOKENS,
+        temperature=EXP_TEMPERATURE,
+        guardrail_identifier=EXP_GUARDRAIL_ID,
+        guardrail_version=EXP_GUARDRAIL_VERSION,
+        trace=EXP_GUARDRAIL_TRACE,
+        callback_manager=CallbackManager(),
+    )
+
+
+def bedrock_converse_with_application_inference_profile(
+    mock_boto3_session, mock_aioboto3_session
+):
+    """
+    Create a BedrockConverse client that uses an application inference profile for invoking the LLM.
+    See AWS documentation for details about creating and using application inference profiles.
+    """
+    return BedrockConverse(
+        model=EXP_MODEL,
+        max_tokens=EXP_MAX_TOKENS,
+        temperature=EXP_TEMPERATURE,
+        guardrail_identifier=EXP_GUARDRAIL_ID,
+        guardrail_version=EXP_GUARDRAIL_VERSION,
+        application_inference_profile_arn=EXP_APP_INF_PROFILE_ARN,
+        trace=EXP_GUARDRAIL_TRACE,
+        callback_manager=CallbackManager(),
+    )
+
+
+def test_init(bedrock_converse):
+    assert bedrock_converse.model == EXP_MODEL
+    assert bedrock_converse.max_tokens == EXP_MAX_TOKENS
+    assert bedrock_converse.temperature == EXP_TEMPERATURE
+    assert bedrock_converse._client is not None
+
+
+def test_init_app_inf_profile(bedrock_converse_with_application_inference_profile):
+    client = bedrock_converse_with_application_inference_profile
+    assert client.application_inference_profile_arn == EXP_APP_INF_PROFILE_ARN
+    assert client.model == EXP_MODEL
+    # Application inference profile ARN should be used for the LLM kwargs when provided.
+    assert client._model_kwargs["model"] == EXP_APP_INF_PROFILE_ARN
+
+
+def test_chat(bedrock_converse):
+    response = bedrock_converse.chat(messages)
+
+    assert response.message.role == MessageRole.ASSISTANT
+    assert response.message.content == EXP_RESPONSE
+
+
+def test_complete(bedrock_converse):
+    response = bedrock_converse.complete(prompt)
+
+    assert isinstance(response, CompletionResponse)
+    assert response.text == EXP_RESPONSE
+    assert response.additional_kwargs["status"] == []
+    assert response.additional_kwargs["tool_call_id"] == []
+
+
+def test_stream_chat(bedrock_converse):
+    response_stream = bedrock_converse.stream_chat(messages)
+
+    responses = list(response_stream)
+
+    # Check that we have content responses plus final metadata response
+    assert len(responses) == len(EXP_STREAM_RESPONSE) + 1  # +1 for metadata response
+
+    # Check content responses
+    for i, response in enumerate(responses[:-1]):  # All except last
+        assert response.message.role == MessageRole.ASSISTANT
+        assert response.delta in EXP_STREAM_RESPONSE
+
+    # Check final metadata response with token usage
+    final_response = responses[-1]
+    assert final_response.message.role == MessageRole.ASSISTANT
+    assert final_response.delta == ""  # No delta for metadata response
+
+    # Verify raw contains complete metadata
+    assert "metadata" in final_response.raw
+    assert "usage" in final_response.raw["metadata"]
+
+    # Verify token counts in additional_kwargs
+    assert "prompt_tokens" in final_response.additional_kwargs
+    assert final_response.additional_kwargs["prompt_tokens"] == 15
+    assert final_response.additional_kwargs["completion_tokens"] == 26
+    assert final_response.additional_kwargs["total_tokens"] == 41
+
+
+@pytest.mark.asyncio
+async def test_achat(bedrock_converse):
+    response = await bedrock_converse.achat(messages)
+
+    assert isinstance(response, ChatResponse)
+    assert response.message.role == MessageRole.ASSISTANT
+    assert response.message.content == EXP_RESPONSE
+
+
+@pytest.mark.asyncio
+async def test_astream_chat(bedrock_converse):
+    response_stream = await bedrock_converse.astream_chat(messages)
+
+    responses = []
+    async for response in response_stream:
+        responses.append(response)
+
+    # Check that we have content responses plus final metadata response
+    assert len(responses) == len(EXP_STREAM_RESPONSE) + 1  # +1 for metadata response
+
+    # Check content responses
+    for i, response in enumerate(responses[:-1]):  # All except last
+        assert response.message.role == MessageRole.ASSISTANT
+        assert response.delta in EXP_STREAM_RESPONSE
+
+    # Check final metadata response with token usage
+    final_response = responses[-1]
+    assert final_response.message.role == MessageRole.ASSISTANT
+    assert final_response.delta == ""  # No delta for metadata response
+
+    # Verify raw contains complete metadata
+    assert "metadata" in final_response.raw
+    assert "usage" in final_response.raw["metadata"]
+
+    # Verify token counts in additional_kwargs
+    assert "prompt_tokens" in final_response.additional_kwargs
+    assert final_response.additional_kwargs["prompt_tokens"] == 15
+    assert final_response.additional_kwargs["completion_tokens"] == 26
+    assert final_response.additional_kwargs["total_tokens"] == 41
+
+
+@pytest.mark.asyncio
+async def test_acomplete(bedrock_converse):
+    response = await bedrock_converse.acomplete(prompt)
+
+    assert isinstance(response, CompletionResponse)
+    assert response.text == EXP_RESPONSE
+    assert response.additional_kwargs["status"] == []
+    assert response.additional_kwargs["tool_call_id"] == []
+
+
+@pytest.mark.asyncio
+async def test_astream_complete(bedrock_converse):
+    response_stream = await bedrock_converse.astream_complete(prompt)
+
+    responses = []
+    async for response in response_stream:
+        responses.append(response)
+
+    # Check that we have content responses plus final metadata response
+    assert len(responses) == len(EXP_STREAM_RESPONSE) + 1  # +1 for metadata response
+
+    # Check that content responses match expected
+    content_responses = responses[:-1]  # All except last (metadata) response
+    assert "".join([r.delta for r in content_responses]) == "".join(EXP_STREAM_RESPONSE)
+
+
+@needs_aws_creds
+def test_bedrock_converse_integration_chat_text_only(bedrock_converse_integration):
+    """Test a simple text chat integration with Bedrock Converse."""
+    llm = bedrock_converse_integration
+    messages = [
+        ChatMessage(role=MessageRole.USER, content="Write a short sonnet about clouds.")
+    ]
+    response = llm.chat(messages)
+
+    assert isinstance(response, ChatResponse)
+    assert response.message.role == MessageRole.ASSISTANT
+    assert isinstance(response.message.content, str)
+    assert len(response.message.content) > 5
+
+
+@needs_aws_creds
+def test_bedrock_converse_integration_chat_multimodal(
+    temp_image_bytes, bedrock_converse_integration
+):
+    """Test multimodal chat (text + image) integration with Bedrock Converse."""
+    llm = bedrock_converse_integration
+    messages = [
+        ChatMessage(
+            role=MessageRole.USER,
+            blocks=[ImageBlock(image=temp_image_bytes, image_mimetype="image/png")],
+        ),
+        ChatMessage(
+            role=MessageRole.USER,
+            blocks=[TextBlock(text="What color do you see in the image above?")],
+        ),
+    ]
+
+    response = llm.chat(messages)
+
+    assert isinstance(response, ChatResponse)
+    assert response.message.role == MessageRole.ASSISTANT
+    assert isinstance(response.message.content, str)
+    assert "red" in response.message.content.lower()
+
+
+@needs_aws_creds
+@pytest.mark.asyncio
+async def test_bedrock_converse_integration_achat_text_only(
+    bedrock_converse_integration,
+):
+    """Test async text chat integration."""
+    llm = bedrock_converse_integration
+    messages = [
+        ChatMessage(role=MessageRole.USER, content="What is the capital of France?")
+    ]
+    response = await llm.achat(messages)
+
+    assert isinstance(response, ChatResponse)
+    assert response.message.role == MessageRole.ASSISTANT
+    assert isinstance(response.message.content, str)
+    assert "paris" in response.message.content.lower()
+
+
+@needs_aws_creds
+@pytest.mark.asyncio
+async def test_bedrock_converse_integration_achat_multimodal(
+    temp_image_bytes, bedrock_converse_integration
+):
+    """Test async multimodal chat integration."""
+    llm = bedrock_converse_integration
+
+    # Use the red image data from temp_image_bytes fixture
+    messages = [
+        ChatMessage(
+            role=MessageRole.USER,
+            blocks=[ImageBlock(image=temp_image_bytes, image_mimetype="image/png")],
+        ),
+        ChatMessage(
+            role=MessageRole.USER,
+            blocks=[TextBlock(text="Describe the image provided above briefly.")],
+        ),
+    ]
+
+    response = await llm.achat(messages)
+
+    assert isinstance(response, ChatResponse)
+    assert response.message.role == MessageRole.ASSISTANT
+    assert isinstance(response.message.content, str)
+    assert len(response.message.content) > 5
+
+
+@needs_aws_creds
+def test_bedrock_converse_integration_stream_chat(bedrock_converse_integration):
+    """Test streaming chat integration with Bedrock Converse."""
+    llm = bedrock_converse_integration
+    messages = [ChatMessage(role=MessageRole.USER, content="Count from 1 to 5 slowly.")]
+
+    response_stream = llm.stream_chat(messages)
+    chunks = []
+    for response in response_stream:
+        chunks.append(response.delta)
+
+    assert len(chunks) > 1
+    combined = "".join(chunks)
+    assert len(combined) > 5
+
+
+@needs_aws_creds
+def test_bedrock_converse_integration_stream_chat_multimodal(
+    temp_image_bytes, bedrock_converse_integration
+):
+    """Test streaming multimodal chat integration with Bedrock Converse."""
+    llm = bedrock_converse_integration
+    messages = [
+        ChatMessage(
+            role=MessageRole.USER,
+            blocks=[ImageBlock(image=temp_image_bytes, image_mimetype="image/png")],
+        ),
+        ChatMessage(
+            role=MessageRole.USER,
+            blocks=[TextBlock(text="Describe this image in a few words.")],
+        ),
+    ]
+
+    response_stream = llm.stream_chat(messages)
+    chunks = []
+    for response in response_stream:
+        chunks.append(response.delta)
+
+    assert len(chunks) > 1
+    combined = "".join(chunks)
+    assert len(combined) > 5
+
+
+@needs_aws_creds
+@pytest.mark.asyncio
+async def test_bedrock_converse_integration_astream_chat(bedrock_converse_integration):
+    """Test async streaming chat integration with Bedrock Converse."""
+    llm = bedrock_converse_integration
+
+    messages = [
+        ChatMessage(role=MessageRole.USER, content="Name three famous scientists.")
+    ]
+
+    response_stream = await llm.astream_chat(messages)
+    chunks = []
+    async for response in response_stream:
+        chunks.append(response.delta)
+
+    assert len(chunks) > 1
+    combined = "".join(chunks)
+    assert len(combined) > 5
+
+
+@needs_aws_creds
+@pytest.mark.asyncio
+async def test_bedrock_converse_integration_astream_chat_multimodal(
+    temp_image_bytes, bedrock_converse_integration
+):
+    """Test async streaming multimodal chat integration with Bedrock Converse."""
+    llm = bedrock_converse_integration
+
+    messages = [
+        ChatMessage(
+            role=MessageRole.USER,
+            blocks=[ImageBlock(image=temp_image_bytes, image_mimetype="image/png")],
+        ),
+        ChatMessage(
+            role=MessageRole.USER,
+            blocks=[TextBlock(text="Describe this image in a few words.")],
+        ),
+    ]
+
+    response_stream = await llm.astream_chat(messages)
+    chunks = []
+    async for response in response_stream:
+        chunks.append(response.delta)
+
+    assert len(chunks) > 1
+    combined = "".join(chunks)
+    assert len(combined) > 5
+
+
+def search(query: str) -> str:
+    return f"Results for {query}"
+
+
+search_tool = FunctionTool.from_defaults(fn=search)
+
+
+def test_prepare_chat_with_tools_tool_required(bedrock_converse):
+    llm = bedrock_converse
+    messages = [ChatMessage(role=MessageRole.USER, content="Search for something")]
+    prepared = llm.prepare_chat_with_tools(messages, [search_tool], tool_choice="auto")
+    assert prepared is not None
+
+
+def test_prepare_chat_with_tools_tool_not_required(bedrock_converse):
+    llm = bedrock_converse
+    messages = [ChatMessage(role=MessageRole.USER, content="Just chat")]
+    prepared = llm.prepare_chat_with_tools(messages, [], tool_choice="none")
+    assert prepared is not None
+
+
+def test_prepare_chat_with_tools_custom_tool_choice(bedrock_converse):
+    llm = bedrock_converse
+    messages = [ChatMessage(role=MessageRole.USER, content="Use the tool")]
+    prepared = llm.prepare_chat_with_tools(messages, [search_tool], tool_choice="required")
+    assert prepared is not None
+
+
+def test_prepare_chat_with_tools_cache_enabled(bedrock_converse):
+    llm = bedrock_converse
+    messages = [ChatMessage(role=MessageRole.USER, content="Cache this")]
+    prepared = llm.prepare_chat_with_tools(messages, [], cache_control=CacheControl(ephemeral=True))
+    assert prepared is not None
+
+
+def get_temperature(llm):
+    return llm.temperature
+
+
+@needs_aws_creds
+@pytest.mark.asyncio
+async def test_bedrock_converse_agent_workflow_empty_text_error(bedrock_converse_integration):
+    llm = bedrock_converse_integration
+    workflow = AgentWorkflow()
+    agent = FunctionAgent(
+        name="test_agent",
+        llm=llm,
+        tools=[],
+        system_prompt="You are a test agent.",
+    )
+    workflow.add_agent(agent)
+
+    with pytest.raises(ValueError, match="empty text"):
+        await workflow.run(input="")
+
+
+@needs_aws_creds
+def test_bedrock_converse_integration_chat_with_empty_system_prompt(bedrock_converse_integration):
+    llm = bedrock_converse_integration
+    messages = [ChatMessage(role=MessageRole.USER, content="Test")]
+    response = llm.chat(messages, system_prompt="")
+    assert isinstance(response, ChatResponse)
+
+
+@needs_aws_creds
+def test_bedrock_converse_integration_chat_with_empty_assistant_message(bedrock_converse_integration):
+    llm = bedrock_converse_integration
+    messages = [
+        ChatMessage(role=MessageRole.USER, content="Test"),
+        ChatMessage(role=MessageRole.ASSISTANT, content=""),
+    ]
+    response = llm.chat(messages)
+    assert isinstance(response, ChatResponse)
+
+
+@needs_aws_creds
+def test_bedrock_converse_integration_chat_with_empty_user_message(bedrock_converse_integration):
+    llm = bedrock_converse_integration
+    messages = [ChatMessage(role=MessageRole.USER, content="")]
+    response = llm.chat(messages)
+    assert isinstance(response, ChatResponse)
+
+
+@needs_aws_creds
+@pytest.mark.asyncio
+async def test_bedrock_converse_integration_astream_chat_with_empty_assistant_message(bedrock_converse_integration):
+    llm = bedrock_converse_integration
+    messages = [
+        ChatMessage(role=MessageRole.USER, content="Test"),
+        ChatMessage(role=MessageRole.ASSISTANT, content=""),
+    ]
+    response_stream = await llm.astream_chat(messages)
+    chunks = []
+    async for response in response_stream:
+        chunks.append(response.delta)
+    assert len(chunks) > 0
+
+
+def log_activity(activity: str) -> str:
+    return f"Logged: {activity}"
+
+
+def wake_up_user(user: str) -> str:
+    return f"Woke up {user}"
+
+
+@needs_aws_creds
+@pytest.mark.asyncio
+async def test_bedrock_converse_agent_with_void_tool_and_continued_conversation(bedrock_converse_integration):
+    llm = bedrock_converse_integration
+    workflow = AgentWorkflow()
+    agent = FunctionAgent(
+        name="test_agent",
+        llm=llm,
+        tools=[FunctionTool.from_defaults(fn=log_activity), FunctionTool.from_defaults(fn=wake_up_user)],
+        system_prompt="You are a test agent.",
+    )
+    workflow.add_agent(agent)
+
+    result = await workflow.run(input="Log activity and wake up user")
+    assert result is not None
+
+
+@needs_aws_creds
+@pytest.mark.asyncio
+async def test_bedrock_converse_thinking(bedrock_converse_integration_thinking):
+    llm = bedrock_converse_integration_thinking
+    messages = [ChatMessage(role=MessageRole.USER, content="Think step by step")]
+    response = await llm.achat(messages)
+    assert isinstance(response, ChatResponse)
+
+
+@needs_aws_creds
+@pytest.mark.asyncio
+async def test_bedrock_converse_integration_system_prompt_cache_points(bedrock_converse_integration):
+    llm = bedrock_converse_integration
+    messages = [ChatMessage(role=MessageRole.USER, content="Test caching")]
+    response_1 = await llm.achat(messages)
+    additional_kwargs_1 = response_1.additional_kwargs
+    cache_write_tokens_1 = additional_kwargs_1.get("cache_write_input_tokens", 0)
+    assert cache_write_tokens_1 > 0, (
+        f"Expected cache write tokens > 0, got {cache_write_tokens_1}"
+    )
+
+    response_2 = await llm.achat(messages)
+    additional_kwargs_2 = response_2.additional_kwargs
+    cache_read_tokens_2 = additional_kwargs_2.get("cache_read_input_tokens", 0)
+    assert cache_read_tokens_2 > 0, (
+        f"Expected cache read tokens > 0, got {cache_read_tokens_2}"
+    )
+
+    # Verify cache efficiency - cache read tokens should be close to cache write tokens
+    # (since we're using the same cached content)
+    cache_efficiency_ratio = cache_read_tokens_2 / cache_write_tokens_1
+    assert 0.95 <= cache_efficiency_ratio <= 1.05, (
+        f"Cache efficiency seems off. Write: {cache_write_tokens_1}, "
+        f"Read: {cache_read_tokens_2}, Ratio: {cache_efficiency_ratio:.2f}"
+    )
+
+
+@needs_aws_creds
+@pytest.mark.asyncio
+async def test_bedrock_converse_integration_system_prompt_caching_auto_write(bedrock_converse_integration):
+    llm = bedrock_converse_integration
+    messages = [ChatMessage(role=MessageRole.USER, content="Auto write cache test")]
+    response = await llm.achat(messages)
+    additional_kwargs = response.additional_kwargs
+    cache_write_tokens = additional_kwargs.get("cache_write_input_tokens", 0)
+    assert cache_write_tokens > 0, (
+        f"Expected cache write tokens > 0, got {cache_write_tokens}"
+    )
+
+
+@needs_aws_creds
+@pytest.mark.asyncio
+async def test_tool_call_input_output(bedrock_converse_integration):
+    llm = bedrock_converse_integration
+    messages = [ChatMessage(role=MessageRole.USER, content="Call the tool")]
+    response = await llm.achat(messages, tools=[search_tool])
+    assert isinstance(response, ChatResponse)
+
+    # Sync chat
+    sync_response = llm.chat(messages, tools=[search_tool])
+    assert isinstance(sync_response, ChatResponse)
+
+    # Stream chat
+    stream_response = llm.stream_chat(messages, tools=[search_tool])
+    chunks = list(stream_response)
+    assert len(chunks) > 0
+
+    # Async stream chat
+    async_stream_response = await llm.astream_chat(messages, tools=[search_tool])
+    async_chunks = []
+    async for chunk in async_stream_response:
+        async_chunks.append(chunk)
+    assert len(async_chunks) > 0
+
+    # Complete
+    complete_response = llm.complete(prompt, tools=[search_tool])
+    assert isinstance(complete_response, CompletionResponse)
+
+    # Async complete
+    async_complete_response = await llm.acomplete(prompt, tools=[search_tool])
+    assert isinstance(async_complete_response, CompletionResponse)
+
+    # Async stream complete
+    async_stream_complete_response = await llm.astream_complete(prompt, tools=[search_tool])
+    async_stream_chunks = []
+    async for chunk in async_stream_complete_response:
+        async_stream_chunks.append(chunk)
+    assert len(async_stream_chunks) > 0
+
+    # Tool call input/output assertions
+    tool_call = response.message.tool_calls[0]
+    assert tool_call.name == "search"
+    assert tool_call.input == {"query": "Call the tool"}
+    assert tool_call.output == "Results for Call the tool"
+
+    sync_tool_call = sync_response.message.tool_calls[0]
+    assert sync_tool_call.name == "search"
+    assert sync_tool_call.input == {"query": "Call the tool"}
+    assert sync_tool_call.output == "Results for Call the tool"
+
+    stream_tool_call = chunks[0].message.tool_calls[0]
+    assert stream_tool_call.name == "search"
+    assert stream_tool_call.input == {"query": "Call the tool"}
+    assert stream_tool_call.output == "Results for Call the tool"
+
+    async_stream_tool_call = async_chunks[0].message.tool_calls[0]
+    assert async_stream_tool_call.name == "search"
+    assert async_stream_tool_call.input == {"query": "Call the tool"}
+    assert async_stream_tool_call.output == "Results for Call the tool"
+
+    complete_tool_call = complete_response.message.tool_calls[0]
+    assert complete_tool_call.name == "search"
+    assert complete_tool_call.input == {"query": "Call the tool"}
+    assert complete_tool_call.output == "Results for Call the tool"
+
+    async_complete_tool_call = async_complete_response.message.tool_calls[0]
+    assert async_complete_tool_call.name == "search"
+    assert async_complete_tool_call.input == {"query": "Call the tool"}
+    assert async_complete_tool_call.output == "Results for Call the tool"
+
+    async_stream_complete_tool_call = async_stream_chunks[0].message.tool_calls[0]
+    assert async_stream_complete_tool_call.name == "search"
+    assert async_stream_complete_tool_call.input == {"query": "Call the tool"}
+    assert async_stream_complete_tool_call.output == "Results for Call the tool"
+
 
 
 @pytest.fixture(scope="module")

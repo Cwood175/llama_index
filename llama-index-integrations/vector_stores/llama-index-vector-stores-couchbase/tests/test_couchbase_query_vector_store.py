@@ -501,6 +501,28 @@ class TestCouchbaseQueryVectorStore:
         # Wait for the documents to be indexed
         time.sleep(SLEEP_DURATION)
 
+        # Test combined filters
+        q = VectorStoreQuery(
+            query_embedding=text_to_embedding("baz"),
+            similarity_top_k=3,
+            filters=MetadataFilters(
+                filters=[
+                    MetadataFilter(
+                        key="genre", value="Thriller", operator=FilterOperator.EQ
+                    ),
+                    MetadataFilter(key="pages", value=20, operator=FilterOperator.EQ),
+                ]
+            ),
+        )
+
+        result = self.vector_store.query(q)
+        assert result.nodes is not None and len(result.nodes) == 1
+        assert result.nodes[0].metadata.get("genre") == "Thriller"
+        assert result.nodes[0].metadata.get("pages") == 20
+
+        # Wait for the documents to be indexed
+        time.sleep(SLEEP_DURATION)
+
         # Test combined filters with AND condition
         q = VectorStoreQuery(
             query_embedding=text_to_embedding("baz"),
