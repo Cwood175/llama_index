@@ -1,30 +1,29 @@
 """Test Couchbase Vector Search functionality."""
 
 from __future__ import annotations
+
+import json
 import os
+import time
 from typing import Any, List
 
 import pytest
-import time
-import json
-
-from llama_index.core.schema import MetadataMode, TextNode, Document
-from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.core.vector_stores.types import (
-    VectorStoreQuery,
-    MetadataFilters,
-    MetadataFilter,
-)
-from llama_index.vector_stores.couchbase import (
-    CouchbaseVectorStore,
-    CouchbaseSearchVectorStore,
-)
-from llama_index.core.storage.storage_context import StorageContext
-from llama_index.core import VectorStoreIndex
 from couchbase.cluster import Cluster
-from couchbase.management.logic.search_index_logic import SearchIndex
 from couchbase.exceptions import SearchIndexNotFoundException
-
+from couchbase.management.logic.search_index_logic import SearchIndex
+from llama_index.core import VectorStoreIndex
+from llama_index.core.schema import Document, MetadataMode, TextNode
+from llama_index.core.storage.storage_context import StorageContext
+from llama_index.core.vector_stores.types import (
+    MetadataFilter,
+    MetadataFilters,
+    VectorStoreQuery,
+)
+from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.vector_stores.couchbase import (
+    CouchbaseSearchVectorStore,
+    CouchbaseVectorStore,
+)
 
 CONNECTION_STRING = os.getenv("COUCHBASE_CONNECTION_STRING", "")
 BUCKET_NAME = os.getenv("COUCHBASE_BUCKET_NAME", "")
@@ -67,9 +66,9 @@ def create_scope_and_collection(
     """Create scope and collection if they don't exist."""
     try:
         from couchbase.exceptions import (
-            ScopeAlreadyExistsException,
             CollectionAlreadyExistsException,
             QueryIndexAlreadyExistsException,
+            ScopeAlreadyExistsException,
         )
 
         bucket = cluster.bucket(bucket_name)
@@ -220,7 +219,7 @@ def node_embeddings() -> list[TextNode]:
 @pytest.mark.skipif(
     not set_all_env_vars(), reason="missing Couchbase environment variables"
 )
-class TestCouchbaseSearchVectorStore:
+class TestCouchbaseSearchVectorStore:  # pragma: no cover
     @pytest.fixture()
     def vector_store(self, cluster: Cluster) -> CouchbaseSearchVectorStore:
         yield CouchbaseSearchVectorStore(

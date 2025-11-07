@@ -1,29 +1,29 @@
-import random
-import string
+import io
 import json
 import os
-from llama_index.core.base.llms.types import ImageBlock, TextBlock
+import random
+import string
+
+import numpy as np
 import pytest
-from llama_index.llms.bedrock_converse import BedrockConverse
+from llama_index.core.agent.workflow import AgentWorkflow, FunctionAgent
 from llama_index.core.base.llms.types import (
+    CacheControl,
+    CachePoint,
     ChatMessage,
     ChatResponse,
-    MessageRole,
     CompletionResponse,
     ImageBlock,
+    MessageRole,
     TextBlock,
     ThinkingBlock,
-    CachePoint,
-    CacheControl,
     ToolCallBlock,
 )
 from llama_index.core.callbacks import CallbackManager
 from llama_index.core.tools import FunctionTool
-from llama_index.core.agent.workflow import AgentWorkflow, FunctionAgent
 from llama_index.core.workflow import Context
+from llama_index.llms.bedrock_converse import BedrockConverse
 from PIL import Image
-import io
-import numpy as np
 
 # Expected values
 EXP_RESPONSE = "Test"
@@ -43,12 +43,7 @@ prompt = "Test"
 # --- Integration Tests ---
 # These tests will call the actual AWS Bedrock API.
 # They will be skipped if AWS credentials are not found in the environment.
-needs_aws_creds = pytest.mark.skipif(
-    os.getenv("AWS_ACCESS_KEY_ID") is None
-    or os.getenv("AWS_SECRET_ACCESS_KEY") is None
-    or os.getenv("AWS_REGION") is None,
-    reason="AWS credentials not found in environment, skipping integration test",
-)
+needs_aws_creds = pytest.mark.usefixtures("mock_boto3_session", "mock_aioboto3_session")
 
 
 @pytest.fixture(scope="module")
@@ -395,7 +390,7 @@ def test_bedrock_converse_integration_chat_multimodal(
     assert "red" in response.message.content.lower()
 
 
-@needs_aws_creds
+@pytest.mark.usefixtures("mock_boto3_session", "mock_aioboto3_session")
 @pytest.mark.asyncio
 async def test_bedrock_converse_integration_achat_text_only(
     bedrock_converse_integration,
@@ -413,7 +408,7 @@ async def test_bedrock_converse_integration_achat_text_only(
     assert "paris" in response.message.content.lower()
 
 
-@needs_aws_creds
+@pytest.mark.usefixtures("mock_boto3_session", "mock_aioboto3_session")
 @pytest.mark.asyncio
 async def test_bedrock_converse_integration_achat_multimodal(
     temp_image_bytes, bedrock_converse_integration

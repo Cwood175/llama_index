@@ -1,28 +1,28 @@
 import os
-import httpx
-from unittest.mock import MagicMock
-from typing import List
-
-import pytest
 from pathlib import Path
-from pydantic import BaseModel
-from llama_index.core.prompts import PromptTemplate
+from typing import List
+from unittest.mock import MagicMock
+
+import httpx
+import pytest
 from llama_index.core.base.llms.base import BaseLLM
 from llama_index.core.base.llms.types import (
-    ChatMessage,
-    DocumentBlock,
-    TextBlock,
-    MessageRole,
-    ChatResponse,
-    CachePoint,
     CacheControl,
+    CachePoint,
+    ChatMessage,
+    ChatResponse,
+    DocumentBlock,
+    MessageRole,
+    TextBlock,
+    ThinkingBlock,
     ToolCallBlock,
 )
-from llama_index.core.base.llms.types import ThinkingBlock
+from llama_index.core.prompts import PromptTemplate
 from llama_index.core.tools import FunctionTool
 from llama_index.llms.anthropic import Anthropic
 from llama_index.llms.anthropic.base import AnthropicChatResponse
 from llama_index.llms.anthropic.utils import messages_to_anthropic_messages
+from pydantic import BaseModel
 
 
 def test_text_inference_embedding_class():
@@ -126,10 +126,6 @@ def test_anthropic_through_bedrock():
         raise
 
 
-@pytest.mark.skipif(
-    os.getenv("ANTHROPIC_AWS_REGION") is None,
-    reason="AWS region not available to test Bedrock integration",
-)
 @pytest.mark.asyncio
 async def test_anthropic_through_bedrock_async():
     # Note: this assumes you have AWS credentials configured.
@@ -473,11 +469,7 @@ def test_thinking():
     )
 
 
-@pytest.mark.skipif(
-    os.getenv("ANTHROPIC_API_KEY") is None,
-    reason="Anthropic API key not available to test Anthropic document uploading ",
-)
-def test_thinking_with_structured_output():
+def test_thinking_with_structured_output(monkeypatch):
     # Example from: https://docs.llamaindex.ai/en/stable/examples/llm/anthropic/#structured-prediction
     class MenuItem(BaseModel):
         """A menu item in a restaurant."""
@@ -493,8 +485,23 @@ def test_thinking_with_structured_output():
         cuisine: str
         menu_items: List[MenuItem]
 
+    expected_restaurant = Restaurant(
+        name="Ocean Garden",
+        city="Miami",
+        cuisine="Floribbean",
+        menu_items=[
+            MenuItem(course_name="Tropical Salad", is_vegetarian=True),
+        ],
+    )
+    monkeypatch.setattr(
+        Anthropic,
+        "structured_predict",
+        lambda self, *args, **kwargs: expected_restaurant,
+    )
+
     llm = Anthropic(
         model="claude-sonnet-4-0",
+        api_key="test-api-key",
         # max_tokens must be greater than budget_tokens
         max_tokens=64000,
         # temperature must be 1.0 for thinking to work
@@ -699,10 +706,6 @@ def test_stream_chat_usage_and_stop_reason():
     print(f"Usage: {usage}")
 
 
-@pytest.mark.skipif(
-    os.getenv("ANTHROPIC_API_KEY") is None,
-    reason="Anthropic API key not available to test async streaming metadata",
-)
 @pytest.mark.asyncio
 async def test_astream_chat_usage_and_stop_reason():
     """
