@@ -1,35 +1,33 @@
 """Test Couchbase Query Vector Store functionality using GSI."""
 
 from __future__ import annotations
-import os
+
 import json
-from typing import Any, List
+import os
+import time
 from datetime import timedelta
+from typing import Any, List
 
 import pytest
-import time
-
-from llama_index.core.schema import MetadataMode, TextNode, Document
-from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.core.vector_stores.types import (
-    VectorStoreQuery,
-    MetadataFilters,
-    MetadataFilter,
-    FilterOperator,
-)
-from llama_index.vector_stores.couchbase import CouchbaseQueryVectorStore
-from llama_index.vector_stores.couchbase.base import QueryVectorSearchType
-from llama_index.vector_stores.couchbase.base import QueryVectorSearchSimilarity
-from llama_index.core.storage.storage_context import StorageContext
-from llama_index.core import VectorStoreIndex
-
-from datetime import timedelta
-
 from couchbase.auth import PasswordAuthenticator
 from couchbase.cluster import Cluster
-from couchbase.options import ClusterOptions
 from couchbase.logic.options import KnownConfigProfiles
-from couchbase.options import QueryOptions
+from couchbase.options import ClusterOptions, QueryOptions
+from llama_index.core import VectorStoreIndex
+from llama_index.core.schema import Document, MetadataMode, TextNode
+from llama_index.core.storage.storage_context import StorageContext
+from llama_index.core.vector_stores.types import (
+    FilterOperator,
+    MetadataFilter,
+    MetadataFilters,
+    VectorStoreQuery,
+)
+from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.vector_stores.couchbase import CouchbaseQueryVectorStore
+from llama_index.vector_stores.couchbase.base import (
+    QueryVectorSearchSimilarity,
+    QueryVectorSearchType,
+)
 
 CONNECTION_STRING = os.getenv("COUCHBASE_CONNECTION_STRING", "")
 BUCKET_NAME = os.getenv("COUCHBASE_BUCKET_NAME", "")
@@ -136,9 +134,9 @@ def create_scope_and_collection(
     """Create scope and collection if they don't exist."""
     try:
         from couchbase.exceptions import (
-            ScopeAlreadyExistsException,
             CollectionAlreadyExistsException,
             QueryIndexAlreadyExistsException,
+            ScopeAlreadyExistsException,
         )
 
         bucket = cluster.bucket(bucket_name)
@@ -261,9 +259,6 @@ def drop_vector_index(
         pass
 
 
-@pytest.mark.skipif(
-    not set_all_env_vars(), reason="missing Couchbase environment variables"
-)
 class TestCouchbaseQueryVectorStore:
     @classmethod
     def setup_class(cls) -> None:
