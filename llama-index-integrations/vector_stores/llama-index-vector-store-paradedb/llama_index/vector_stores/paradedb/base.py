@@ -1,19 +1,16 @@
 import logging
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple, Union, Callable
-from llama_index.core.vector_stores.types import MetadataFilters
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 import sqlalchemy
 from llama_index.core.bridge.pydantic import BaseModel, Field
-from llama_index.core.vector_stores.types import VectorStoreQuery
-from sqlalchemy.sql.selectable import Select
-
+from llama_index.core.vector_stores.types import MetadataFilters
 from llama_index.vector_stores.postgres.base import (
-    PGVectorStore,
     DBEmbeddingRow,
     PGType,
+    PGVectorStore,
 )
-
+from sqlalchemy.sql.selectable import Select
 
 _logger = logging.getLogger(__name__)
 
@@ -33,11 +30,27 @@ def get_bm25_data_model(
     """
     Creates a data model optimized for BM25 search (without text_search_tsv column).
     """
-    from pgvector.sqlalchemy import Vector, HALFVEC
-    from sqlalchemy import Column
-    from sqlalchemy.dialects.postgresql import BIGINT, JSON, JSONB, VARCHAR
-    from sqlalchemy import cast, column, String, Integer, Numeric, Float, Boolean, Date, DateTime
-    from sqlalchemy.dialects.postgresql import DOUBLE_PRECISION, UUID
+    from pgvector.sqlalchemy import HALFVEC, Vector
+    from sqlalchemy import (
+        Boolean,
+        Column,
+        Date,
+        DateTime,
+        Float,
+        Integer,
+        Numeric,
+        String,
+        cast,
+        column,
+    )
+    from sqlalchemy.dialects.postgresql import (
+        BIGINT,
+        DOUBLE_PRECISION,
+        JSON,
+        JSONB,
+        UUID,
+        VARCHAR,
+    )
     from sqlalchemy.schema import Index
 
     pg_type_map = {
@@ -54,7 +67,7 @@ def get_bm25_data_model(
     }
 
     indexed_metadata_keys = indexed_metadata_keys or set()
-    
+
     for key, pg_type in indexed_metadata_keys:
         if pg_type not in pg_type_map:
             raise ValueError(
@@ -67,7 +80,9 @@ def get_bm25_data_model(
     indexname = f"{index_name}_idx"
 
     metadata_dtype = JSONB if use_jsonb else JSON
-    embedding_col = Column(HALFVEC(embed_dim)) if use_halfvec else Column(Vector(embed_dim))
+    embedding_col = (
+        Column(HALFVEC(embed_dim)) if use_halfvec else Column(Vector(embed_dim))
+    )
 
     metadata_indices = [
         Index(
@@ -107,7 +122,7 @@ def get_bm25_data_model(
 class ParadeDBVectorStore(PGVectorStore, BaseModel):
     """
     ParadeDB Vector Store with BM25 search support.
-    
+
     Inherits from PGVectorStore and adds BM25 full-text search capabilities
     using ParadeDB's pg_search extension.
 
@@ -130,16 +145,19 @@ class ParadeDBVectorStore(PGVectorStore, BaseModel):
             use_halfvec=True
         )
         ```
+
     """
 
     connection_string: Optional[Union[str, sqlalchemy.engine.URL]] = Field(default=None)
-    async_connection_string: Optional[Union[str, sqlalchemy.engine.URL]] = Field(default=None)
+    async_connection_string: Optional[Union[str, sqlalchemy.engine.URL]] = Field(
+        default=None
+    )
     table_name: Optional[str] = Field(default=None)
     schema_name: Optional[str] = Field(default="paradedb")
     hybrid_search: bool = Field(default=False)
     text_search_config: str = Field(default="english")
     embed_dim: int = Field(default=1536)
-    cache_ok: bool = Field(default=False) 
+    cache_ok: bool = Field(default=False)
     perform_setup: bool = Field(default=True)
     debug: bool = Field(default=False)
     use_jsonb: bool = Field(default=False)
@@ -154,7 +172,7 @@ class ParadeDBVectorStore(PGVectorStore, BaseModel):
         table_name: Optional[str] = None,
         schema_name: Optional[str] = None,
         hybrid_search: bool = False,
-        text_search_config: str = "english", 
+        text_search_config: str = "english",
         embed_dim: int = 1536,
         cache_ok: bool = False,
         perform_setup: bool = True,
@@ -176,7 +194,7 @@ class ParadeDBVectorStore(PGVectorStore, BaseModel):
             self,
             connection_string=connection_string,
             async_connection_string=async_connection_string,
-            table_name=table_name, 
+            table_name=table_name,
             schema_name=schema_name or "paradedb",
             hybrid_search=hybrid_search,
             text_search_config=text_search_config,
@@ -187,14 +205,16 @@ class ParadeDBVectorStore(PGVectorStore, BaseModel):
             use_jsonb=use_jsonb,
             hnsw_kwargs=hnsw_kwargs,
             create_engine_kwargs=create_engine_kwargs,
-            use_bm25=use_bm25
+            use_bm25=use_bm25,
         )
-        
+
         # Call parent constructor
         PGVectorStore.__init__(
             self,
             connection_string=str(connection_string) if connection_string else None,
-            async_connection_string=str(async_connection_string) if async_connection_string else None,
+            async_connection_string=str(async_connection_string)
+            if async_connection_string
+            else None,
             table_name=table_name,
             schema_name=self.schema_name,
             hybrid_search=hybrid_search,
@@ -213,10 +233,11 @@ class ParadeDBVectorStore(PGVectorStore, BaseModel):
             indexed_metadata_keys=indexed_metadata_keys,
             customize_query_fn=customize_query_fn,
         )
-        
+
         # Override table model if using BM25
         if self.use_bm25:
             from sqlalchemy.orm import declarative_base
+
             self._base = declarative_base()
             self._table_class = get_bm25_data_model(
                 self._base,
@@ -270,6 +291,7 @@ class ParadeDBVectorStore(PGVectorStore, BaseModel):
 
         Returns:
             ParadeDBVectorStore: Instance of ParadeDBVectorStore.
+
         """
         conn_str = (
             connection_string
@@ -298,10 +320,10 @@ class ParadeDBVectorStore(PGVectorStore, BaseModel):
             customize_query_fn=customize_query_fn,
         )
 
-    def _create_extension(self) -> None:
+    async def _create_extension(self) -> None:
         """Override to add pg_search extension for BM25."""
-        super()._create_extension()
-        
+        await super()._create_extension()
+
         if self.use_bm25:
             with self._session() as session, session.begin():
                 try:
@@ -333,14 +355,14 @@ class ParadeDBVectorStore(PGVectorStore, BaseModel):
                 _logger.warning(f"Failed to create BM25 index {table_fq}: {e}")
                 raise
 
-    def _initialize(self) -> None:
+    async def _initialize(self) -> None:
         """Override to add BM25 index creation."""
         if not self._is_initialized:
-            super()._initialize()
-            
+            await super()._initialize()
+
             if self.use_bm25 and self.perform_setup:
                 try:
-                    self._create_bm25_index()
+                    await self._create_bm25_index()
                 except Exception as e:
                     _logger.warning(f"PG Setup: Error creating BM25 index: {e}")
                     if self.initialization_fail_on_error:
@@ -355,10 +377,12 @@ class ParadeDBVectorStore(PGVectorStore, BaseModel):
     ) -> Any:
         """Override to use BM25 if enabled, otherwise use parent's ts_vector."""
         if not self.use_bm25:
-            return super()._build_sparse_query(query_str, limit, metadata_filters, **kwargs)
-        
+            return super()._build_sparse_query(
+                query_str, limit, metadata_filters, **kwargs
+            )
+
         from sqlalchemy import text
-        
+
         if query_str is None:
             raise ValueError("query_str must be specified for a sparse vector query.")
 
@@ -381,7 +405,7 @@ class ParadeDBVectorStore(PGVectorStore, BaseModel):
 
         return stmt
 
-    def _sparse_query_with_rank(
+    async def _sparse_query_with_rank(
         self,
         query_str: Optional[str] = None,
         limit: int = 10,
@@ -389,11 +413,13 @@ class ParadeDBVectorStore(PGVectorStore, BaseModel):
     ) -> List[DBEmbeddingRow]:
         """Override to handle BM25 results properly."""
         if not self.use_bm25:
-            return super()._sparse_query_with_rank(query_str, limit, metadata_filters)
-        
+            return await super()._sparse_query_with_rank(
+                query_str, limit, metadata_filters
+            )
+
         stmt = self._build_sparse_query(query_str, limit, metadata_filters)
         with self._session() as session, session.begin():
-            res = session.execute(stmt)
+            res = await session.execute(stmt)
             return [
                 DBEmbeddingRow(
                     node_id=item.node_id,
@@ -417,8 +443,10 @@ class ParadeDBVectorStore(PGVectorStore, BaseModel):
     ) -> List[DBEmbeddingRow]:
         """Override to handle async BM25 results properly."""
         if not self.use_bm25:
-            return await super()._async_sparse_query_with_rank(query_str, limit, metadata_filters)
-        
+            return await super()._async_sparse_query_with_rank(
+                query_str, limit, metadata_filters
+            )
+
         stmt = self._build_sparse_query(query_str, limit, metadata_filters)
         async with self._async_session() as session, session.begin():
             res = await session.execute(stmt)
